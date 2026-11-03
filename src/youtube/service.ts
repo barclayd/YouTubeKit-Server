@@ -264,12 +264,14 @@ export class YouTubeService {
       const fallbackClient: AvailableInnertubeClient = 'WEB_EMBEDDED';
 
       let allStreams: TimedRemoteStream[] = [];
+      const failures: Error[] = [];
 
       for (const client of clients) {
          try {
             const streams = await this.getStreamsForClient(innertube, client);
             allStreams = allStreams.concat(streams);
          } catch (error) {
+            if (error instanceof Error) failures.push(error);
             console.error(`Failed to get streams for client ${client}:`, error);
          }
       }
@@ -279,15 +281,19 @@ export class YouTubeService {
       if (allStreams.length === 0) {
          try {
             this.embeddedPlayerConfig = await this.getEmbeddedPlayerConfig(fetcher);
-            return this.deduplicateStreams(
-               await this.getStreamsForClient(innertube, fallbackClient, this.embeddedPlayerConfig.encryptedHostFlags)
-            );
+            allStreams = await this.getStreamsForClient(innertube, fallbackClient, this.embeddedPlayerConfig.encryptedHostFlags);
          } catch (error) {
+            if (error instanceof Error) failures.push(error);
             console.error(`Failed to get streams for fallback client ${fallbackClient}:`, error);
          }
       }
 
-      if (allStreams.length === 0) throw new Error('YouTube did not provide compatible video streams');
+      if (allStreams.length === 0) {
+         // A failed embedded fallback must not hide YouTube's explicit bot challenge.
+         throw failures.find(error => /not a bot/i.test(error.message))
+            ?? failures[failures.length - 1]
+            ?? new Error('YouTube did not provide compatible video streams');
+      }
       return this.deduplicateStreams(allStreams);
    }
 
