@@ -2,6 +2,21 @@ import { expect, it } from 'vitest';
 import { Innertube } from 'youtubei.js';
 import { YouTubeService } from '../src/youtube/service';
 
+it('preserves a bot challenge when embedded fallback also fails', async () => {
+   const service = new YouTubeService('zGv68RvajSY', new WebSocketPair()[1]);
+   const innertube = await Innertube.create({
+      generate_session_locally: true,
+      retrieve_player: false,
+      retrieve_innertube_config: false,
+      fetch: async () => Response.json({
+         playabilityStatus: { status: 'LOGIN_REQUIRED', reason: 'Sign in to confirm you’re not a bot' },
+      }),
+   });
+   await expect(service['getStreams'](innertube, async () => {
+      throw new Error('This video is unavailable');
+   })).rejects.toThrow('Sign in to confirm you’re not a bot');
+});
+
 it('prefers Samsung clear formats while keeping clear alternatives to DRM formats and their preroll wait', async () => {
    const clients: string[] = [];
    const service = new YouTubeService('test-video', new WebSocketPair()[1]);

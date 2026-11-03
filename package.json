@@ -1,23 +1,23 @@
 {
-	"name": "youtubekit-server",
-	"version": "0.0.0",
-	"private": true,
-	"scripts": {
-		"deploy": "wrangler deploy",
-		"dev": "wrangler dev",
-		"start": "wrangler dev",
-		"test": "vitest",
-		"cf-typegen": "wrangler types",
-		"typecheck": "tsc --noEmit"
-	},
-	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.16.11",
-		"typescript": "^5.5.2",
-		"vitest": "^4.1.8",
-		"wrangler": "^4.153.0"
-	},
-	"dependencies": {
-		"quickjs-emscripten": "^0.31.0",
-		"youtubei.js": "github:alexeichhorn/YouTube.js#8d208f1a3c42a4719cd7d092b9fd425a79430619"
-	}
+  "name": "youtubekit-server",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy --config wrangler.mytube.jsonc",
+    "dev": "wrangler dev --config wrangler.mytube.jsonc",
+    "start": "wrangler dev --config wrangler.mytube.jsonc",
+    "test": "vitest",
+    "cf-typegen": "wrangler types --config wrangler.mytube.jsonc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.23.0",
+    "typescript": "^5.5.2",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.153.0"
+  },
+  "dependencies": {
+    "quickjs-emscripten": "^0.31.0",
+    "youtubei.js": "github:alexeichhorn/YouTube.js#8d208f1a3c42a4719cd7d092b9fd425a79430619"
+  }
 }

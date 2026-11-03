@@ -19,7 +19,10 @@ export class YouTubeService {
    // Fixed 12-byte header: packetId (4), chunkIndex (4), totalChunks (4)
    private static readonly CHUNK_HEADER_SIZE = 12;
 
-   constructor(videoID: string, websocket: WebSocket) {
+   constructor(videoID: string, websocket: WebSocket, private readonly options: {
+      fetcher?: typeof fetch;
+      mapStream?: (stream: RemoteStream) => Promise<RemoteStream>;
+   } = {}) {
       this.videoID = videoID;
       this.websocket = websocket;
    }
@@ -102,17 +105,19 @@ export class YouTubeService {
             return await evaluateJavaScript(data, env);
          };
 
+         const fetcher = this.options.fetcher ?? wsFetch;
          const innertube = await Innertube.create({
-            fetch: wsFetch,
+            fetch: fetcher,
             ...(YouTubeService.PLAYER_ID_OVERRIDE ? { player_id: YouTubeService.PLAYER_ID_OVERRIDE } : {}),
          });
-         const streams = await this.getStreams(innertube, wsFetch);
+         const streams = await this.getStreams(innertube, fetcher);
 
          const sentAt = Date.now();
-         const content: RemoteStream[] = streams.map(({ availableAt, ...stream }) => ({
+         let content: RemoteStream[] = streams.map(({ availableAt, ...stream }) => ({
             ...stream,
             available_in_ms: availableAt > sentAt ? Math.ceil(availableAt - sentAt) : undefined,
          }));
+         if (this.options.mapStream) content = await Promise.all(content.map(this.options.mapStream));
          this.send({ type: ServerMessageType.result, content });
       } catch (error: any) {
          console.error(error);
@@ -259,12 +264,14 @@ export class YouTubeService {
       const fallbackClient: AvailableInnertubeClient = 'WEB_EMBEDDED';
 
       let allStreams: TimedRemoteStream[] = [];
+      const failures: Error[] = [];
 
       for (const client of clients) {
          try {
             const streams = await this.getStreamsForClient(innertube, client);
             allStreams = allStreams.concat(streams);
          } catch (error) {
+            if (error instanceof Error) failures.push(error);
             console.error(`Failed to get streams for client ${client}:`, error);
          }
       }
@@ -274,14 +281,19 @@ export class YouTubeService {
       if (allStreams.length === 0) {
          try {
             this.embeddedPlayerConfig = await this.getEmbeddedPlayerConfig(fetcher);
-            return this.deduplicateStreams(
-               await this.getStreamsForClient(innertube, fallbackClient, this.embeddedPlayerConfig.encryptedHostFlags)
-            );
+            allStreams = await this.getStreamsForClient(innertube, fallbackClient, this.embeddedPlayerConfig.encryptedHostFlags);
          } catch (error) {
+            if (error instanceof Error) failures.push(error);
             console.error(`Failed to get streams for fallback client ${fallbackClient}:`, error);
          }
       }
 
+      if (allStreams.length === 0) {
+         // A failed embedded fallback must not hide YouTube's explicit bot challenge.
+         throw failures.find(error => /not a bot/i.test(error.message))
+            ?? failures[failures.length - 1]
+            ?? new Error('YouTube did not provide compatible video streams');
+      }
       return this.deduplicateStreams(allStreams);
    }
 
@@ -332,6 +344,12 @@ export class YouTubeService {
          },
          client,
       });
+      const playability = response.data.playabilityStatus;
+      console.log(JSON.stringify({ event: 'player_response', client, status: playability?.status,
+         reason: playability?.reason, formatCount: (response.data.streamingData?.formats?.length ?? 0) + (response.data.streamingData?.adaptiveFormats?.length ?? 0) }));
+      if (playability?.status && playability.status !== 'OK') {
+         throw new Error(playability.reason ?? 'YouTube did not provide playable video');
+      }
       const availableAt = Date.now() + prerollWaitMs(response.data);
       const info = new YT.VideoInfo([response], innertube.actions, '');
       const f = info.streaming_data || { formats: [], adaptive_formats: [] };
@@ -391,6 +409,7 @@ export class YouTubeService {
 
                const stream: TimedRemoteStream = {
                   url: streamUrl,
+                  video_title: response.data.videoDetails?.title ?? info.basic_info.title,
                   itag: format.itag,
                   ext: fileExtensionFromMimeType(mimeType),
                   video_codec: videoCodec,
