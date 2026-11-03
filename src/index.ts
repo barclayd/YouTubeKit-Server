@@ -11,6 +11,7 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+import { authorized, mediaURL, relayMedia, serverFetch } from './media-proxy';
 import { YouTubeService } from './youtube/service';
 export { AppRateLimiter } from './durable-objects/app-rate-limiter';
 import { RateLimitDecision } from './durable-objects/app-rate-limiter';
@@ -22,16 +23,12 @@ export default {
    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
       const url = new URL(request.url);
 
-      // Log the User-Agent header for debugging purposes
-      const userAgent = request.headers.get('User-Agent') ?? 'unknown';
-      console.log(`User Agent: ${userAgent}`);
-
-      // Log the App ID header for debugging purposes
+      if (url.pathname === '/media') return relayMedia(request, env.MEDIA_SIGNING_KEY);
       const appID = normalizeAppID(request.headers.get(APP_ID_HEADER));
-      console.log(`App ID: ${appID}`);
 
       // Only handle GET /v1?videoID=... as WebSocket upgrades
       if (url.pathname === '/v1' && request.headers.get('Upgrade') === 'websocket') {
+         if (!await authorized(request, env.ACCESS_TOKEN)) return new Response('Unauthorized', { status: 401 });
          try {
             const decision = await checkRateLimit(appID, env);
             if (!decision.allowed) {
@@ -55,7 +52,7 @@ export default {
          }
 
          const videoID = url.searchParams.get('videoID');
-         if (!videoID) {
+         if (!videoID || !/^[A-Za-z0-9_-]{11}$/.test(videoID)) {
             return new Response('Missing videoID', { status: 400 });
          }
 
@@ -64,8 +61,13 @@ export default {
          // accept and handle on server side
          serverSock.accept();
 
-         const youtubeService = new YouTubeService(videoID, serverSock);
-         youtubeService.start();
+         const abort = new AbortController();
+         serverSock.addEventListener('close', () => abort.abort());
+         const youtubeService = new YouTubeService(videoID, serverSock, {
+            fetcher: serverFetch(abort.signal),
+            mapStream: async stream => ({ ...stream, url: await mediaURL(url.origin, stream.url, env.MEDIA_SIGNING_KEY) }),
+         });
+         ctx.waitUntil(youtubeService.start());
 
          return new Response(null, { status: 101, webSocket: clientSock });
       }

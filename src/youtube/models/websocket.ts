@@ -20,6 +20,7 @@ export interface RemoteURLResponse {
 }
 
 export interface RemoteStream {
+   video_title?: string;
    url: string;
    itag: number;
    ext: string;
